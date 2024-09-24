@@ -28,27 +28,31 @@ def index(request):
 
 
 def validate_body_sale(json_data):
-    if not isinstance(json_data, list):
-        raise Exception('body is not type list')
+    sales_id = json_data['sales_id']
+    if not isinstance(sales_id, int) or sales_id < 1:
+        raise Exception('sales_id is not valid')
     
-    for data in json_data:
-        inventory_id = data['inventory_id']
-        amount = data['amount']
-        sales_id = data['sales_id']
+    products = json_data['products']
+    if not isinstance(products, list):
+        raise Exception('products is not type list')
+    
+    for product in products:
+        inventory_id = product['inventory_id']
+        amount = product['amount']
         if not isinstance(inventory_id, int) or inventory_id < 1:
             raise Exception('inventory_id is not valid')
         elif not isinstance(amount, int) or amount < 1:
             raise Exception('amount is not valid')
-        elif not isinstance(sales_id, int) or sales_id < 1:
-            raise Exception('sales_id is not valid')
+        
 
 
 def update_stock(json_data):
+    sales_id = json_data['sales_id']
+    products = json_data['products']
     with transaction.atomic():
-        for data in json_data:
-            inventory_id = data['inventory_id']
-            amount = data['amount']
-            sales_id = data['sales_id']
+        for product in products:
+            inventory_id = product['inventory_id']
+            amount = product['amount']
             product = Inventory.objects.select_for_update().get(pk=inventory_id)
             print(amount, product.stock, amount > product.stock)
             if amount > product.stock:
@@ -72,7 +76,8 @@ def sale(request):
 
         try:
             validate_body_sale(json_data=json_data)
-        except:
+        except Exception as e:
+            logger.error('Error when validating body ' + str(e))
             return JsonResponse(data={'success': False, 'error': 'Error request body is malfored' }, status=400)
         
         for _ in range(3):
