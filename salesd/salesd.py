@@ -1,8 +1,9 @@
 from confluent_kafka import Consumer, KafkaError, KafkaException
 from multiprocessing import Process, Queue
+from sqlalchemy import create_engine, text, Engine
+import json
 import logging
 import sys
-import json
 import signal
 import requests
 
@@ -44,7 +45,22 @@ def consumer(q: Queue, switch: Switch):
     q.put(signal.SIGINT)
 
 
-def processor(consumer_q: Queue):
+def claim_stock(value) -> bool:
+    for _ in range(3):
+        try:
+            result = requests.post(url=URL, data=value)
+            if result.status_code == 200:
+                return True
+            elif result.status_code != 200:
+                logging.error('sales failed with error: ', result.json())
+                raise Exception('failed claim with error: ', result.json())
+        except Exception as e:
+            logging.error('claim stock failed with error: ', str(e))
+            continue
+
+    return False
+
+def processor(consumer_q: Queue, engine: Engine):
     logging.info('job processor started')
     while True:
         logging.info("job processor poll")
@@ -52,32 +68,40 @@ def processor(consumer_q: Queue):
         if item == signal.SIGINT:
             return
         
-        _ = item[0] # value not needed
+        _ = item[0] # key not needed
         value = item[1]
+        success_claim = claim_stock(value=value)
+        obj = json.loads(value)
         for _ in range(3):
             try:
-                result = requests.post(url=URL, data=value)
-                print(result) # TODO: raise if not success
-                break
-            except:
+                with engine.connect() as conn:
+                    update_stmt = text("UPDATE rest_sales SET status=:status,updated_at=now() WHERE id=:id")
+                    result = conn.execute(update_stmt, parameters={'id': obj['sales_id'], 'status': 'PROCESSED' if success_claim else 'FAILED'})
+                    conn.commit()
+                    logging.info(result.rowcount)
+            except Exception as e:
+                logging.error(e)
                 continue
+            # ideally we sent email to the customer 
 
 
 def main():
+    engine = create_engine("postgresql+psycopg2://postgres:password@localhost/sales")
+
     s = Switch()
     consumer_q = Queue()
 
     consumer_process = Process(target=consumer, args=(consumer_q,s,))
-    transformer_process = Process(target=processor, args=(consumer_q,))
+    processor_process = Process(target=processor, args=(consumer_q,engine,))
 
     consumer_process.start()
-    transformer_process.start()
+    processor_process.start()
 
     consumer_process.join()
-    transformer_process.join()
+    processor_process.join()
 
     consumer_process.close()
-    transformer_process.close()
+    processor_process.close()
 
     logging.info('all done')
 
