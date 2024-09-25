@@ -9,7 +9,11 @@ import logging
 logger = logging.getLogger(__name__)
 
 class StockDepletedException(Exception):
-    "Raised amount of sale is greater than available stock"
+    "Raised when amount of sale is greater than available stock"
+    pass
+
+class SaleAlreadyProcessedException(Exception):
+    "Raised when sale inventory already processed"
     pass
 
 
@@ -49,6 +53,11 @@ def validate_body_sale(json_data):
 def update_stock(json_data):
     sales_id = json_data['sales_id']
     products = json_data['products']
+    InventoryHistory.objects.count()
+    cnt = InventoryHistory.objects.filter(sales_id=sales_id).count()
+    if cnt > 0:
+        raise SaleAlreadyProcessedException('sale already processed')
+    
     with transaction.atomic():
         for product in products:
             inventory_id = product['inventory_id']
@@ -83,6 +92,8 @@ def sale(request):
         for _ in range(3):
             try:
                 update_stock(json_data)
+                return JsonResponse(data={'success': True, 'message': 'Successfully claiming stock' }, status=200)
+            except SaleAlreadyProcessedException:
                 return JsonResponse(data={'success': True, 'message': 'Successfully claiming stock' }, status=200)
             except StockDepletedException:
                 return JsonResponse(data={'success': False, 'error': 'Amount is greater than stock' }, status=400)
